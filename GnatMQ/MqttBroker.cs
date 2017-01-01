@@ -39,6 +39,17 @@ namespace uPLibrary.Networking.M2Mqtt
     /// </summary>
     public class MqttBroker
     {
+        // events (fastlink30)
+        public event EventHandler BrokerStart;
+        public event EventHandler BrokerStop;
+        public event EventHandler<string> ClientClose;
+        public event EventHandler<MqttMsgConnectEventArgs> ClientConnected;
+        public event EventHandler<MqttMsgPublishEventArgs> ClientMsgPublishReceived;
+        public event EventHandler<MqttMsgUnsubscribeEventArgs> ClientMsgUnsubscribeReceived;
+        public event EventHandler<MqttMsgSubscribeEventArgs> ClientMsgSubscribeReceived;
+        public event EventHandler<string> ClientMsgDisconnected;
+        public event EventHandler<string> ClientConnectionClosed;
+
         // MQTT broker settings
         private MqttSettings settings;
 
@@ -47,7 +58,7 @@ namespace uPLibrary.Networking.M2Mqtt
 
         // reference to publisher manager
         private MqttPublisherManager publisherManager;
-        
+
         // reference to subscriber manager
         private MqttSubscriberManager subscriberManager;
 
@@ -117,7 +128,7 @@ namespace uPLibrary.Networking.M2Mqtt
 
             // MQTT communication layer
             this.commLayer = commLayer;
-            this.commLayer.ClientConnected += commLayer_ClientConnected;           
+            this.commLayer.ClientConnected += commLayer_ClientConnected;
 
             // create managers (publisher, subscriber, session and UAC)
             this.subscriberManager = new MqttSubscriberManager();
@@ -135,6 +146,8 @@ namespace uPLibrary.Networking.M2Mqtt
         {
             this.commLayer.Start();
             this.publisherManager.Start();
+
+            BrokerStart?.Invoke(this, null);
         }
 
         /// <summary>
@@ -150,6 +163,7 @@ namespace uPLibrary.Networking.M2Mqtt
             {
                 client.Close();
             }
+            BrokerStop?.Invoke(this, null);
         }
 
         /// <summary>
@@ -192,6 +206,8 @@ namespace uPLibrary.Networking.M2Mqtt
 
                 // remove client from the collection
                 this.clients.Remove(client);
+
+                ClientClose?.Invoke(this, client.ClientId);
             }
         }
 
@@ -216,11 +232,13 @@ namespace uPLibrary.Networking.M2Mqtt
         {
             MqttClient client = (MqttClient)sender;
 
+            ClientMsgPublishReceived?.Invoke(client, e);
+
             // create PUBLISH message to publish
             // [v3.1.1] DUP flag from an incoming PUBLISH message is not propagated to subscribers
             //          It should be set in the outgoing PUBLISH message based on transmission for each subscriber
             MqttMsgPublish publish = new MqttMsgPublish(e.Topic, e.Message, false, e.QosLevel, e.Retain);
-            
+
             // publish message through publisher manager
             this.publisherManager.Publish(publish);
         }
@@ -228,6 +246,8 @@ namespace uPLibrary.Networking.M2Mqtt
         void Client_MqttMsgUnsubscribeReceived(object sender, MqttMsgUnsubscribeEventArgs e)
         {
             MqttClient client = (MqttClient)sender;
+
+            ClientMsgUnsubscribeReceived?.Invoke(client, e);
 
             for (int i = 0; i < e.Topics.Length; i++)
             {
@@ -249,6 +269,8 @@ namespace uPLibrary.Networking.M2Mqtt
         void Client_MqttMsgSubscribeReceived(object sender, MqttMsgSubscribeEventArgs e)
         {
             MqttClient client = (MqttClient)sender;
+
+            ClientMsgSubscribeReceived?.Invoke(client, e);
 
             for (int i = 0; i < e.Topics.Length; i++)
             {
@@ -366,6 +388,8 @@ namespace uPLibrary.Networking.M2Mqtt
                         client.Connack(e.Message, returnCode, clientId, sessionPresent);
 
                         this.sessionManager.ClearSession(clientId);
+
+                        ClientConnected?.Invoke(sender, e);
                     }
                 }
                 else
@@ -384,6 +408,8 @@ namespace uPLibrary.Networking.M2Mqtt
         {
             MqttClient client = (MqttClient)sender;
 
+            ClientMsgDisconnected?.Invoke(client, client.ClientId);
+
             // close the client
             this.CloseClient(client);
         }
@@ -391,6 +417,8 @@ namespace uPLibrary.Networking.M2Mqtt
         void Client_ConnectionClosed(object sender, EventArgs e)
         {
             MqttClient client = (MqttClient)sender;
+
+            ClientConnectionClosed?.Invoke(client, client.ClientId);
 
             // close the client
             this.CloseClient(client);
@@ -412,7 +440,7 @@ namespace uPLibrary.Networking.M2Mqtt
             else
             {
                 // client id length exceeded (only for old MQTT 3.1)
-                if  ((connect.ProtocolVersion == MqttMsgConnect.PROTOCOL_VERSION_V3_1) &&
+                if ((connect.ProtocolVersion == MqttMsgConnect.PROTOCOL_VERSION_V3_1) &&
                      (connect.ClientId.Length > MqttMsgConnect.CLIENT_ID_MAX_LENGTH))
                     returnCode = MqttMsgConnack.CONN_REFUSED_IDENT_REJECTED;
                 else
@@ -444,11 +472,18 @@ namespace uPLibrary.Networking.M2Mqtt
         /// <returns>Reference to client</returns>
         private MqttClient GetClient(string clientId)
         {
-            var query = from c in this.clients
-                        where c.ClientId == clientId
-                        select c;
+            return this
+                .clients
+                .Where(c => c.ClientId == clientId)
+                .Select(c => c)
+                .FirstOrDefault();
 
-            return query.FirstOrDefault();
+            //    var query=
+            //    from c in this.clients
+            //            where c.ClientId == clientId
+            //            select c;
+
+            //return query.FirstOrDefault();
         }
     }
 }
